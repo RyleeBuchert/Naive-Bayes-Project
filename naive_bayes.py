@@ -1,6 +1,9 @@
 from sklearn.model_selection import train_test_split
+from mlxtend.plotting import plot_confusion_matrix
+import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
+import random
 
 # multivariate bernoulli event model algorithm
 class BernoulliNB:
@@ -63,9 +66,9 @@ class BernoulliNB:
             input = input_name_list
 
         # get predictions for test set
-        prediction_list = []
-        classification_prob = {}
+        prediction_list = [] 
         for line in input:
+            classification_prob = {}
             for i in self.classes:
                 sum_log_word_prob = 0
                 for word in line:
@@ -81,7 +84,8 @@ class BernoulliNB:
             if prediction_list[i] == key.iloc[i]:
                 total_correct += 1
 
-        return total_correct / total_instances
+        # returns 2 element list containing model accuracy (%) and a list of predictions
+        return [(total_correct/total_instances), prediction_list]
 
 # multinomial event model algorithm
 class MultinomialNB:
@@ -146,8 +150,8 @@ class MultinomialNB:
 
         # get predictions for test set
         prediction_list = []
-        classification_prob = {}
         for line in input:
+            classification_prob = {}
             for i in self.classes:
                 sum_log_word_prob = 0
                 for word in line:
@@ -163,7 +167,8 @@ class MultinomialNB:
             if prediction_list[i] == key.iloc[i]:
                 total_correct += 1
         
-        return total_correct / total_instances
+        # returns 2 element list containing model accuracy (%) and a list of predictions
+        return [(total_correct/total_instances), prediction_list]
 
 # method to create dataframe of word counts
 def create_count_df(input_dataset, model_type):
@@ -194,6 +199,80 @@ def create_count_df(input_dataset, model_type):
 
     return output_df
 
+# method to cross validate model training for hyperparameter tuning
+def cross_validation(model, X_train_set, Y_train_set, param_grid, cv):
+    full_data = pd.concat([Y_train_set, X_train_set], axis=1)
+    index_list = full_data.index.tolist()
+    remaining_indexes = index_list
+    data_dict = {}
+    for i in range(cv):
+        test_indexes = random.sample(remaining_indexes, int(len(full_data)/cv))
+        train_indexes = set(index_list)-set(test_indexes)        
+        data_dict.update({i: {'train': full_data[full_data.index.isin(train_indexes)], 'test': full_data[full_data.index.isin(test_indexes)]}})
+        remaining_indexes = list(set(remaining_indexes)-set(test_indexes))
+
+    results_dict = {}
+    for key in data_dict:
+        temp_X_train = data_dict[key]['train'].drop(data_dict[key]['train'].columns[0], axis=1)
+        temp_Y_train = data_dict[key]['train'][Y_train_set.name]
+        temp_X_test = data_dict[key]['test'].drop(data_dict[key]['test'].columns[0], axis=1)
+        temp_Y_test = data_dict[key]['test'][Y_train_set.name]
+
+        temp_model = model
+        temp_model.fit(temp_X_train, temp_Y_train, param_grid['alpha'][key])
+        results_dict.update({param_grid['alpha'][key]: temp_model.predict(temp_X_test, temp_Y_test)})
+    
+    return max(results_dict, key=results_dict.get)
+
+# method to obtain confusion matrix from predictions and key
+def get_confusion_matrix(predictions, key):
+    unique_classes = list(key.unique())
+    unique_classes.sort()
+    plot_dict = {}
+    for i in unique_classes:
+        plot_dict.update({i: {'Correct': 0, 'Incorrect': 0}})
+    for i in range(len(predictions)):
+        for j in unique_classes:
+            if key.iloc[i] == j and predictions[i] == j:
+                plot_dict[j]['Correct'] += 1
+            elif key.iloc[i] == j and predictions[i] != j:
+                plot_dict[j]['Incorrect'] += 1
+
+    plot_list = []
+    for i in unique_classes:
+        plot_list.append(plot_dict[i]['Correct'])
+        plot_list.append(plot_dict[i]['Incorrect'])
+    plot_list = np.array([[plot_list[0], plot_list[1]],[plot_list[3], plot_list[2]]])
+    fig, ax = plot_confusion_matrix(conf_mat=plot_list, show_absolute=True, show_normed=True, colorbar=True)
+    plt.show()
+
+# method to obtain confusion matrix values for multiple predictions
+def get_confusion_values(predictions, key):
+    unique_classes = list(key.unique())
+    unique_classes.sort()
+    plot_dict = {}
+    for i in unique_classes:
+        plot_dict.update({i: {'Correct': 0, 'Incorrect': 0}})
+    for i in range(len(predictions)):
+        for j in unique_classes:
+            if key.iloc[i] == j and predictions[i] == j:
+                plot_dict[j]['Correct'] += 1
+            elif key.iloc[i] == j and predictions[i] != j:
+                plot_dict[j]['Incorrect'] += 1
+
+    plot_list = []
+    for i in unique_classes:
+        plot_list.append(plot_dict[i]['Correct'])
+        plot_list.append(plot_dict[i]['Incorrect'])
+    
+    return plot_list
+
+# method to plot average confusion matrix
+def plot_avg_confusion_matrix(conf_list):
+    plot_list = np.array([[int(conf_list[0]), int(conf_list[1])],[int(conf_list[3]), int(conf_list[2])]])
+    fig, ax = plot_confusion_matrix(conf_mat=plot_list, show_absolute=True, show_normed=True, colorbar=True)
+    plt.show()
+
 
 if __name__ == "__main__":
 
@@ -209,6 +288,7 @@ if __name__ == "__main__":
     review_data['Review'] = review_data['Review'].str.replace('\W', ' ')
     review_data['Review'] = review_data['Review'].str.lower()
     review_data['Review'] = review_data['Review'].str.split()
+    review_data = review_data.reset_index(drop=True)
 
     # create training set and separate X and Y columns
     training_Y = review_data['Label']
@@ -219,14 +299,24 @@ if __name__ == "__main__":
     X_train_bernoulli = create_count_df(X_train, "Bernoulli")
     X_train_multinomial = create_count_df(X_train, "Multinomial")
 
-    # fit models and get results
+    # fit bernoulli model and get accuracy/confusion matrix
     NB = BernoulliNB()
     NB.fit(X_train_bernoulli, Y_train)
-    print("Text Bernoulli Accuracy:", NB.predict(X_test, Y_test))
+    bernoulli_results_list = NB.predict(X_test, Y_test)
+    print("Text Bernoulli Accuracy:", bernoulli_results_list[0])
+    get_confusion_matrix(bernoulli_results_list[1], Y_test)
 
+    # cross-validation for alpha hyperparameter
+    alpha_params = {'alpha': [0.01, 0.1, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0]}
+    best_alpha = cross_validation(MultinomialNB(), X_train_multinomial, Y_train, alpha_params, 8)
+    print('Best Alpha:', best_alpha)
+
+    # fit multinomial model and get accuracy/confusion matrix
     NB = MultinomialNB()
     NB.fit(X_train_multinomial, Y_train, 1)
-    print("Text Multinomial Accuracy:", NB.predict(X_test, Y_test))
+    multinomial_results_list = NB.predict(X_test, Y_test)
+    print("Text Multinomial Accuracy:", multinomial_results_list[0])
+    get_confusion_matrix(multinomial_results_list[1], Y_test)
 
 
     # obtain digit image data and generate training/test sets
@@ -235,11 +325,19 @@ if __name__ == "__main__":
     training_X = digit_data.drop(digit_data.columns[0], axis=1)
     X_train, X_test, Y_train, Y_test = train_test_split(training_X, training_Y, test_size = 0.2)
 
-    # fit models and get results
+    # fit Bernoulli models and get results
     NB = BernoulliNB()
     NB.fit(X_train, Y_train)
-    print("Digit Bernoulli Accuracy:", NB.predict(X_test, Y_test))
+    bernoulli_results_list = NB.predict(X_test, Y_test)
+    print("Digit Bernoulli Accuracy:", bernoulli_results_list[0])
 
+    # cross-validation for alpha hyperparameter
+    alpha_params = {'alpha': [0.01, 0.1, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0]}
+    best_alpha = cross_validation(MultinomialNB(), X_train, Y_train, alpha_params, 8)
+    print('Best Alpha:', best_alpha)
+
+    # fit multinomial model and get results
     NB = MultinomialNB()
-    NB.fit(X_train, Y_train, 1)
-    print("Digit Multinomial Accuracy:", NB.predict(X_test, Y_test))
+    NB.fit(X_train, Y_train, best_alpha)
+    multinomial_results_list = NB.predict(X_test, Y_test)
+    print("Digit Multinomial Accuracy:", multinomial_results_list[0])
