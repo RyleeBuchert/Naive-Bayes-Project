@@ -10,7 +10,6 @@ class BernoulliNB:
 
     # class constructor
     def __init__(self):
-
         self.classes = None
     
     # method to fit model to training set
@@ -87,12 +86,12 @@ class BernoulliNB:
         # returns 2 element list containing model accuracy (%) and a list of predictions
         return [(total_correct/total_instances), prediction_list]
 
+
 # multinomial event model algorithm
 class MultinomialNB:
 
     # class constructor
     def __init__(self):
-
         self.classes = None
 
     # method to fit model to training set
@@ -166,7 +165,7 @@ class MultinomialNB:
         for i in range(len(prediction_list)):
             if prediction_list[i] == key.iloc[i]:
                 total_correct += 1
-        
+
         # returns 2 element list containing model accuracy (%) and a list of predictions
         return [(total_correct/total_instances), prediction_list]
 
@@ -200,13 +199,13 @@ def create_count_df(input_dataset, model_type):
     return output_df
 
 # method to cross validate model training for hyperparameter tuning
-def cross_validation(model, X_train_set, Y_train_set, param_grid, cv):
+def cross_validation(model, X_train_set, Y_train_set, param_grid, alpha):
     full_data = pd.concat([Y_train_set, X_train_set], axis=1)
     index_list = full_data.index.tolist()
     remaining_indexes = index_list
     data_dict = {}
-    for i in range(cv):
-        test_indexes = random.sample(remaining_indexes, int(len(full_data)/cv))
+    for i in range(alpha):
+        test_indexes = random.sample(remaining_indexes, int(len(full_data)/alpha))
         train_indexes = set(index_list)-set(test_indexes)        
         data_dict.update({i: {'train': full_data[full_data.index.isin(train_indexes)], 'test': full_data[full_data.index.isin(test_indexes)]}})
         remaining_indexes = list(set(remaining_indexes)-set(test_indexes))
@@ -273,6 +272,36 @@ def plot_avg_confusion_matrix(conf_list):
     fig, ax = plot_confusion_matrix(conf_mat=plot_list, show_absolute=True, show_normed=True, colorbar=True)
     plt.show()
 
+# method to test model over multiple iterations
+def iterative_test(dataset, X_data_train, Y_data_train, model, iterative_range, cv=None, alpha=None):
+
+    if cv is not None and alpha is not None:
+        X_train, X_test, Y_train, Y_test = train_test_split(X_data_train, Y_data_train, test_size=0.2)
+        best_alpha = cross_validation(MultinomialNB(), X_train, Y_train, cv, alpha)
+
+    result_list = []
+    for i in range(iterative_range):
+        X_train, X_test, Y_train, Y_test = train_test_split(X_data_train, Y_data_train, test_size=0.2)
+        if model == "Bernoulli":
+            temp_NB = BernoulliNB()
+            temp_NB.fit(X_train, Y_train)
+        elif model == "Multinomial":
+            temp_NB = MultinomialNB()
+            temp_NB.fit(X_train, Y_train, best_alpha)
+        temp_result_list = temp_NB.predict(X_test, Y_test)
+        result_list.append(temp_result_list[0])
+        print(i)
+
+    if model == "Bernoulli":
+        with open(f"C:\\Visual_Studio\\CS_5333\\Project 1\\bernoulli_{dataset}_results.txt", "w") as output:
+            for item in result_list:
+                output.write(str(item)+'\n')
+    elif model == "Multinomial":
+        with open(f"C:\\Visual_Studio\\CS_5333\\Project 1\\multinomial_{dataset}_results.txt", "w") as output:
+            output.write("Best Alpha: "+ str(best_alpha) + '\n')
+            for item in result_list:
+                output.write(str(item)+'\n')
+
 
 if __name__ == "__main__":
 
@@ -291,27 +320,34 @@ if __name__ == "__main__":
     review_data = review_data.reset_index(drop=True)
 
     # create training set and separate X and Y columns
-    training_Y = review_data['Label']
     training_X = review_data['Review']
-    X_train, X_test, Y_train, Y_test = train_test_split(training_X, training_Y, test_size = 0.2)
+    training_Y = review_data['Label']
 
     # get count df for X column
-    X_train_bernoulli = create_count_df(X_train, "Bernoulli")
-    X_train_multinomial = create_count_df(X_train, "Multinomial")
+    X_train_bernoulli = create_count_df(training_X, "Bernoulli")
+    X_train_multinomial = create_count_df(training_X, "Multinomial")
 
-    # fit bernoulli model and get accuracy/confusion matrix
+    # fit bernoulli model and get accuracy/confusion matrix (iterative test)
+    iterative_test("text", X_train_bernoulli, training_Y, "Bernoulli", 100)
+
+    # fit bernoulli model and get accuracy/confusion matrix (single test)
+    X_train, X_test, Y_train, Y_test = train_test_split(X_train_bernoulli, training_Y, test_size=0.2)
     NB = BernoulliNB()
     NB.fit(X_train_bernoulli, Y_train)
     bernoulli_results_list = NB.predict(X_test, Y_test)
     print("Text Bernoulli Accuracy:", bernoulli_results_list[0])
     get_confusion_matrix(bernoulli_results_list[1], Y_test)
 
-    # cross-validation for alpha hyperparameter
-    alpha_params = {'alpha': [0.01, 0.1, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0]}
+    # fit multinomial model and get accuracy/confusion matrix (iterative test)
+    alpha_params = {'alpha': [0.1, 0.5, 1.0, 2.0, 3.0]}
+    iterative_test("text", X_train_multinomial, training_Y, "Multinomial", 100, alpha_params, 5)
+
+    # fit multinomial model and get accuracy/confusion matrix (single test)
+    X_train, X_test, Y_train, Y_test = train_test_split(X_train_multinomial, training_Y, test_size=0.2)
+    alpha_params = {'alpha': [0.1, 0.5, 1.0, 2.0, 3.0]}
     best_alpha = cross_validation(MultinomialNB(), X_train_multinomial, Y_train, alpha_params, 8)
     print('Best Alpha:', best_alpha)
 
-    # fit multinomial model and get accuracy/confusion matrix
     NB = MultinomialNB()
     NB.fit(X_train_multinomial, Y_train, 1)
     multinomial_results_list = NB.predict(X_test, Y_test)
@@ -323,20 +359,27 @@ if __name__ == "__main__":
     digit_data = pd.read_csv('C:\\Visual_Studio\\CS_5333\\Project 1\\digit_data.csv')
     training_Y = digit_data['label']
     training_X = digit_data.drop(digit_data.columns[0], axis=1)
-    X_train, X_test, Y_train, Y_test = train_test_split(training_X, training_Y, test_size = 0.2)
+    
+    # fit Bernoulli models and get results (iterative test)
+    iterative_test("digit", training_X, training_Y, "Bernoulli", 100)
 
-    # fit Bernoulli models and get results
+    # fit Bernoulli models and get results (single test)
+    X_train, X_test, Y_train, Y_test = train_test_split(training_X, training_Y, test_size = 0.2)
     NB = BernoulliNB()
     NB.fit(X_train, Y_train)
     bernoulli_results_list = NB.predict(X_test, Y_test)
     print("Digit Bernoulli Accuracy:", bernoulli_results_list[0])
 
-    # cross-validation for alpha hyperparameter
+    # fit multinomial model and get results (iterative test)
+    alpha_params = {'alpha': [0.1, 0.5, 1.0, 2.0, 3.0]}
+    iterative_test("digit", training_X, training_Y, "Multinomial", 100, alpha_params, 5)
+
+    # fit multinomial model and get results (single test)
+    X_train, X_test, Y_train, Y_test = train_test_split(training_X, training_Y, test_size = 0.2)
     alpha_params = {'alpha': [0.01, 0.1, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0]}
     best_alpha = cross_validation(MultinomialNB(), X_train, Y_train, alpha_params, 8)
     print('Best Alpha:', best_alpha)
 
-    # fit multinomial model and get results
     NB = MultinomialNB()
     NB.fit(X_train, Y_train, best_alpha)
     multinomial_results_list = NB.predict(X_test, Y_test)
